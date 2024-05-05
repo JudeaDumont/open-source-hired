@@ -1,0 +1,17 @@
+{
+  "Java, Java 11": "tech",
+  "Ruby": "tech",
+  "Javascript": "tech",
+  "Go": "cloud-tech",
+  "Python": "adjacent-tech",
+  "Rust": "adjacent-tech",
+  "C++, cpp": "tech",
+  "PostgreSQL": "db-tech",
+  "Ruby on Rails": "tech",
+  "GCP": "cloud-tech",
+  "Docker": "container-tech",
+  "Kubernetes": "container-tech",
+  "Nomad": "cloud-tech",
+  "terraform": "cloud-tech",
+  "gke": "cloud-tech"
+}

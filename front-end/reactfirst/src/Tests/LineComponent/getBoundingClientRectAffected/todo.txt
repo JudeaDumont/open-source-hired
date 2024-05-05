@@ -1,0 +1,2 @@
+todo: change getBoundingClientRect to be a call to a global function that passes in the element you
+ want to call getBoundingClientRect on. then hijack it for testing.

@@ -1,0 +1,156 @@
+# Purpose: ci/cd
+
+name: "Hired, Full Integration Test"
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+  jersey-servlet:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Change hosts file
+        run: |
+          sudo bash -c "echo \"127.0.0.1   postgres\" >> /etc/hosts"
+          sudo cat /etc/hosts
+
+      - name: Install postgres
+        run: |
+          whoami
+          sudo apt install postgresql postgresql-contrib -y
+
+      - name: Start postgres
+        run: |
+          sudo systemctl start postgresql.service
+          sudo pg_lsclusters 
+
+      - name: Switch to postgres user
+        run: |
+          sudo -i -u postgres
+          sudo su - postgres
+
+      - name: Change postgres user password
+        run: |
+          echo 'postgres:root' | sudo chpasswd
+          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'root';"
+
+      - name: Create DB
+        run: |
+          sudo -u postgres psql -c 'create database testdb;'
+          sudo -u postgres psql -c 'create database proddb;'
+
+      - uses: actions/checkout@v3
+      - name: Set up JDK 20
+        uses: actions/setup-java@v3
+        with:
+          java-version: '20'
+          distribution: 'zulu'
+          cache: maven
+
+      - name: chmod bundles directory
+        run: |
+          ls
+          mkdir Bundles
+          sudo chmod 777 ./Bundles
+
+      - name: Update apt-get
+        run: |
+          sudo apt-get -q update 1> /dev/null
+
+      - name: Copy Tomcat
+        run: |
+          sudo mkdir /opt/tomcat
+          sudo cp -r apache-tomcat-9.0.83 /opt/tomcat/apache-tomcat-9.0.83
+          cd /opt/tomcat/apache-tomcat-9.0.83
+          ls
+          cd logs
+
+      - name: Create Tomcat User
+        run: |
+          sudo useradd -m -U -d /opt/tomcat -s /bin/false tomcat
+          sudo chown -R tomcat: /opt/tomcat
+          sudo sh -c 'chmod +x /opt/tomcat/apache-tomcat-9.0.83/bin/*.sh'
+
+      - name: Copy mvn settings
+        run: |
+          cd github_actions_configuration
+          ls
+          cd ..
+          sudo cat /usr/share/apache-maven-3.8.8/conf/settings.xml 1> /dev/null
+          sudo cp github_actions_configuration/settings.xml /usr/share/apache-maven-3.8.8/conf/settings.xml
+
+      - name: Copy tomcat settings
+        run: |
+          sudo cp github_actions_configuration/setenv.sh /opt/tomcat/apache-tomcat-9.0.83/bin/setenv.sh
+          sudo chmod +x "/opt/tomcat/apache-tomcat-9.0.83/bin/setenv.sh"
+          
+          sudo cat /opt/tomcat/apache-tomcat-9.0.83/conf/tomcat-users.xml 1> /dev/null
+          sudo cp github_actions_configuration/tomcat-users.xml /opt/tomcat/apache-tomcat-9.0.83/conf/tomcat-users.xml
+          
+          sudo cat /opt/tomcat/apache-tomcat-9.0.83/conf/server.xml 1> /dev/null
+          sudo cp github_actions_configuration/server.xml /opt/tomcat/apache-tomcat-9.0.83/conf/server.xml
+
+      - name: Create systemd Tomcat Service
+        run: |
+          which java
+          sudo cp github_actions_configuration/tomcat.service /etc/systemd/system/tomcat.service
+          sudo systemctl daemon-reload
+
+      - name: Run Tomcat Service
+        run: |
+          sudo systemctl enable --now tomcat
+        env:
+          JASYPT_ENCRYPTOR_PASSWORD: "${{secrets.ACTIONS_JASYPT_ENCRYPTOR_PASSWORD}}"
+
+      - name: Status Tomcat Service
+        if: always()
+        run: |
+          sudo systemctl status tomcat
+
+      - name: Run Flyway
+        run: |
+          mvn -q flyway:baseline -s github_actions_configuration/settings.xml --file pom.xml
+          mvn -q flyway:migrate -s github_actions_configuration/settings.xml --file pom.xml
+        env:
+          JASYPT_ENCRYPTOR_PASSWORD: "${{secrets.ACTIONS_JASYPT_ENCRYPTOR_PASSWORD}}" #required for yamlparser test
+
+      - name: Test Maven
+        run: |
+          mvn test
+        env:
+          JASYPT_ENCRYPTOR_PASSWORD: "${{secrets.ACTIONS_JASYPT_ENCRYPTOR_PASSWORD}}" #required for yamlparser test
+          JAVA_HOME: "/opt/hostedtoolcache/Java_Zulu_jdk/20.0.2-9/x64"
+
+      - name: Package Maven
+        run: |
+          mvn -B package -Dmaven.test.skip --file pom.xml
+        env:
+          JASYPT_ENCRYPTOR_PASSWORD: "${{secrets.ACTIONS_JASYPT_ENCRYPTOR_PASSWORD}}" #required for yamlparser test
+
+      - name: Deploy Maven
+        run: |
+          sudo mvn tomcat7:deploy -Dmaven.test.skip
+        env:
+          JASYPT_ENCRYPTOR_PASSWORD: "${{secrets.ACTIONS_JASYPT_ENCRYPTOR_PASSWORD}}" #required for yamlparser test
+
+      - name: Open 7777
+        run: |
+          sudo ufw allow 7777/tcp
+
+      - name: Test
+        run: |
+          sudo wget --content-on-error -S -O - "http://localhost:7777/simple-service-webapp/webapi/api/v2/keypool/loadProdPool"
+
+      - name: Install npm
+        run: |
+          sudo apt install npm nodejs 
+
+      - name: Jest Test
+        run: |
+          cd front-end/reactfirst
+          npm install
+          sleep 10s
+          npm test
